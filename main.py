@@ -4,6 +4,9 @@ import GUI
 from PyQt5.QtWidgets import QTableWidgetItem, QHeaderView
 import sys
 from math import ceil
+import re
+from urllib.parse import quote
+import time
 
 header = {'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
     'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko)\
@@ -94,6 +97,84 @@ class SearchArxiv(object):
             if 0 == flag: #condition when there is no more search results
                 self.printf('no more results')
                 return 1
+            
+class SearchPrl(object):
+
+       #this class has the property to store literature datas from search results, and have the function/
+    # to search articles on psysical review letters website for a given question.
+
+    literaturelist = [] #searched papers will be stored in this list as a series of datas with the Literature type
+
+    def __init__(self, quest: str, number: int, ui: GUI.Ui_MainWindow):
+        self.quest = quest #the question given by user
+        self.number = number
+        self.ui = ui
+
+    def printf(self, mes: str):
+        self.ui.output.append(mes)
+        self.cursot = self.ui.output.textCursor()
+        self.ui.output.moveCursor(self.cursot.End)
+        GUI.QApplication.processEvents()
+ 
+    def search(self):
+        #this function is to search the given number of articles from the website
+
+        #make a get request to the website for search results
+        url =  'https://journals.aps.org/search/results?sort=relevance&clauses=' + quote('[{"operator":"AND","field":"all","value":"%s"}]'%(self.quest))
+        self.printf(url)
+        try:
+            r = requests.get(url,headers = header)
+        #situation when failng to connect to the website
+        except(ConnectionRefusedError):
+            self.self.printff('cannot connect to the internet')
+            return -1
+        if 200 != r.status_code:
+            self.printf('cannot search papers on prl')
+            return -1
+        
+        #parse the data with beautifulsoup
+        time
+        bs = BeautifulSoup(r.content,'html.parser')
+        print(bs)
+    
+        paperid, page = 0, 0
+        while paperid < self.number:
+            flag = 0 #signal variable
+            for node in bs.find_all('div',class_='large-9 columns search-results ofc-main'):
+                paperlist = node.find_all('div',class_='large-9 columns')
+                for paper in paperlist:
+                    flag = 1 #change value when geting results successfully
+                    literature = Literature()
+                    literature.id = paperid + 1
+                    literature.title = paper.find('h5',class_='title').text.strip()
+                    literature.link = (paper.find('h5',class_='title').find('a'))['href']
+                    literature.pdf_url = (paper.find('p',class_='list-title').find('span').find('a'))['href']
+                    literature.author = []
+                    for author in paper.find('h6',class_='authors').text.strip().split(','):
+                        literature.author.append(author.strip())
+                    literature.abstract = paper.find('div',class_='summary').find('p').text.strip()
+                    literature.date = re.findall('(?<=published ).*$',paper.find('h6',class_='citation').text.strip())
+                    paperid += 1
+                    self.literaturelist.append(literature)
+                    if paperid == self.number: #check if the number of searched articles has reached to its maximun
+                        return 1
+
+            page += 1
+            url =  'https://journals.aps.org/search/results?sort=relevance&clauses=' + quote('[{"operator":"AND","field":"all","value":"%s"}]'%(self.quest)) + 'page=' + str(page)
+
+            try:
+                r = requests.get(url,headers = header)
+        #situation when failng to connect to the website
+            except(ConnectionRefusedError):
+                self.self.printff('cannot connect to the internet')
+                return -1
+            if 200 != r.status_code: #condition when failed to connect to the website
+                self.printf('Some unexpected mistakes happened when searhing on prl')
+                return 0
+            bs = BeautifulSoup(r.content,'html.parser')
+            if 0 == flag: #condition when there is no more search results
+                self.printf('no more results')
+                return 1
          
 class ResultList(object):
    
@@ -123,6 +204,11 @@ class ResultList(object):
             self.papers.search()
             self.result_number = len(self.papers.literaturelist)
             self.last_page = ceil(self.result_number / self.rows) #to find the final page
+        elif 1 == self.ui.comboBox_search_on.currentIndex():
+            self.papers = SearchPrl(quest,number,self.ui) #where papers is a class,has a list proeprty: literaturelist[] to store the paper class
+            self.papers.search()
+            self.result_number = len(self.papers.literaturelist)
+            self.last_page = ceil(self.result_number / self.rows) #to find the final page
         self.printf('there are ' + str(self.result_number) + ' results')
 
     def show_results(self):
@@ -138,7 +224,6 @@ class ResultList(object):
             self.ui.table_search.setItem(row, 1, QTableWidgetItem(paper.date))
             self.ui.table_search.setItem(row, 3, QTableWidgetItem(paper.abstract))
             self.ui.table_search.setItem(row, 4, QTableWidgetItem(paper.link))
-            self.printf(paper.pdf_url)
             for author in paper.author:
                 self.ui.table_search.setItem(row, 2, QTableWidgetItem(author + ','))
 
@@ -164,6 +249,7 @@ class ResultList(object):
             self.printf('request to download' + str(literature.title) +'failed,cannot connect to the internet')
             return -1
         #try:
+        self.printf('downloading from' + literature.pdf_url)
         with open(self.path + str(literature.id) + ',' + literature.title + '.pdf','wb') as f:
             f.write(r.content)
             f.flush() #in case of the file is in the buffer!!
@@ -185,13 +271,14 @@ class ResultList(object):
     def click_to_download(self,row):
         if self.start_id + row >= self.result_number:
             return 0
-        self.printf('downloading ' + self.papers.literaturelist[self.start_id + row].title)
         ui.table_pushButton[row].setText('downloading')
         if 1 == self.download(self.papers.literaturelist[self.start_id + row]):
             ui.table_pushButton[row].setText('downloaded')
-            self.printf(self.papers.literaturelist[self.start_id + row].title + ' has been downloaded')
+            self.printf('pdf has been downloaded')
         else:
             ui.table_pushButton[row].setText('download')
+    
+    
 
 class Reference(object):
     
