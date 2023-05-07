@@ -1,7 +1,10 @@
 from bs4 import BeautifulSoup
 import requests
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.edge.options import Options
 import GUI
-from PyQt5.QtWidgets import QTableWidgetItem, QHeaderView
+from PyQt5.QtWidgets import QTableWidgetItem, QHeaderView, QFileDialog
 import sys
 from math import ceil
 import re
@@ -78,25 +81,26 @@ class SearchArxiv(object):
                     literature.date = paper.find('p',class_='is-size-7').text.strip()[10:].split(';')[0]
                     paperid += 1
                     self.literaturelist.append(literature)
-                    if paperid == self.number: #check if the number of searched articles has reached to its maximun
+                    if paperid >= self.number: #check if the number of searched articles has reached to its maximun
                         return 1
-
+                    
+            if 0 == flag: #condition when there is no more search results
+                self.printf('no more results')
+                return 1
             page += 1
             url =  'https://arxiv.org/search/physics?query=' + self.quest +'&searchtype=all&abstracts=show&order=-announced_date_first&size=50' + '&start=' + str(50 * page)
         #    try:
             r = requests.get(url,headers = header)
             #situation when failng to connect to the website
             ''' except:
-                self.self.printff('cannot connect to the internet')
+                self.self.printf('cannot connect to the internet')
                 return -1
             '''
             if 200 != r.status_code: #condition when failed to connect to the website
                 self.printf('Some unexpected mistakes happened when searhing from arXiv')
                 return 0
             bs = BeautifulSoup(r.content,'html.parser')
-            if 0 == flag: #condition when there is no more search results
-                self.printf('no more results')
-                return 1
+
             
 class SearchPrl(object):
 
@@ -121,22 +125,32 @@ class SearchPrl(object):
 
         #make a get request to the website for search results
         url =  'https://journals.aps.org/search/results?sort=relevance&clauses=' + quote('[{"operator":"AND","field":"all","value":"%s"}]'%(self.quest))
-        self.printf(url)
+        option = Options()
+        option.add_argument('--headless=new')
+        #option.headless = True
+        option.add_argument('--disable-gpu')
+        driver = webdriver.Edge(options=option)
         try:
-            r = requests.get(url,headers = header)
+            driver.get(url)
         #situation when failng to connect to the website
         except(ConnectionRefusedError):
-            self.self.printff('cannot connect to the internet')
+            self.self.printf('cannot connect to the internet')
             return -1
-        if 200 != r.status_code:
-            self.printf('cannot search papers on prl')
-            return -1
-        
-        #parse the data with beautifulsoup
-        time
-        bs = BeautifulSoup(r.content,'html.parser')
-        print(bs)
-    
+       
+        driver.implicitly_wait(5) #wait for the webpage to completely load
+        if [] == driver.find_elements(By.ID, 'search-main'):
+            self.printf('cannot find any search sesult')
+            driver.close()
+            return 1
+        #ckick to show the abstract
+        pluses = driver.find_elements(By.CLASS_NAME, 'fi-plus')
+        for plus in pluses:
+            plus.click()
+        #abstracts= driver.find_elements(By.CLASS_NAME, 'summary')
+        #print(len(abstracts))
+        #parse the data
+        bs = BeautifulSoup(driver.page_source, 'html.parser')
+
         paperid, page = 0, 0
         while paperid < self.number:
             flag = 0 #signal variable
@@ -147,35 +161,58 @@ class SearchPrl(object):
                     literature = Literature()
                     literature.id = paperid + 1
                     literature.title = paper.find('h5',class_='title').text.strip()
-                    literature.link = (paper.find('h5',class_='title').find('a'))['href']
-                    literature.pdf_url = (paper.find('p',class_='list-title').find('span').find('a'))['href']
+                    literature.link = 'https://journals.aps.org' + (paper.find('h5',class_='title').find('a'))['href']
+                    literature.pdf_url = literature.link.replace('abstract', 'pdf')
                     literature.author = []
-                    for author in paper.find('h6',class_='authors').text.strip().split(','):
+                    for author in paper.find('h6',class_='authors').text.replace('and', ',').strip().split(', '):
                         literature.author.append(author.strip())
-                    literature.abstract = paper.find('div',class_='summary').find('p').text.strip()
-                    literature.date = re.findall('(?<=published ).*$',paper.find('h6',class_='citation').text.strip())
+                    if None != paper.find(class_='summary'):
+                        literature.abstract = paper.find(class_='summary').find('p').text.strip()
+                    else:
+                        literature.abstract = 'no more abstract'
+
+                    literature.date = re.findall('(?<=Published ).*$',paper.find('h6',class_='citation').text.strip())[0]
                     paperid += 1
                     self.literaturelist.append(literature)
-                    if paperid == self.number: #check if the number of searched articles has reached to its maximun
+                    if paperid >= self.number: #check if the number of searched articles has reached to its maximun
+                        driver.close()
                         return 1
-
-            page += 1
-            url =  'https://journals.aps.org/search/results?sort=relevance&clauses=' + quote('[{"operator":"AND","field":"all","value":"%s"}]'%(self.quest)) + 'page=' + str(page)
-
-            try:
-                r = requests.get(url,headers = header)
-        #situation when failng to connect to the website
-            except(ConnectionRefusedError):
-                self.self.printff('cannot connect to the internet')
-                return -1
-            if 200 != r.status_code: #condition when failed to connect to the website
-                self.printf('Some unexpected mistakes happened when searhing on prl')
-                return 0
-            bs = BeautifulSoup(r.content,'html.parser')
+                    #i = 0
+                    #while i < 20:
+                    #    try:
+                    #        literature.abstract = paper.find_element(By.CLASS_NAME, 'summary').text
+                    #        break
+                    #    except:
+                    #        print('faled to get information from paper ' + paperid)
+                    #    i += 1
             if 0 == flag: #condition when there is no more search results
                 self.printf('no more results')
+                driver.close()
                 return 1
-         
+            if paperid >= self.number: #check if the number of searched articles has reached to its maximun
+                driver.close()
+                return 1
+            page += 1
+            url =  'https://journals.aps.org/search/results?sort=relevance&clauses=' + quote('[{"operator":"AND","field":"all","value":"%s"}]'%(self.quest)) + '&page=' + str(page + 1)
+            driver = webdriver.Edge()
+            try:
+                driver.get(url)
+            #situation when failng to connect to the website
+            except(ConnectionRefusedError):
+                self.self.printf('cannot connect to the internet')
+                driver.close()
+                return -1
+
+            
+            #click to show the abstract
+            pluses = driver.find_elements(By.CLASS_NAME, 'fi-plus')
+            for plus in pluses:
+                plus.click()
+            #parse the data
+            bs = BeautifulSoup(driver.page_source, 'html.parser')
+        return 1
+
+   #This class helps to connect the search results to the users' UI     
 class ResultList(object):
    
     def __init__(self, ui : GUI.Ui_MainWindow):
@@ -186,13 +223,15 @@ class ResultList(object):
         self.path = ".\\"
         self.start_id = 0 #the paper_id of the fisrt paper in a particular page
         self.result_number = 0
-
+    
+    #print information on the UI
     def printf(self, mes: str):
         self.ui.output.append(mes)
         self.cursot = self.ui.output.textCursor()
         self.ui.output.moveCursor(self.cursot.End)
         GUI.QApplication.processEvents()
 
+    #This function is to search the article when the search button is clicked
     def search_results(self):
         quest = self.ui.lineEdit_search.text().strip()
         if None == quest:
@@ -211,7 +250,9 @@ class ResultList(object):
             self.last_page = ceil(self.result_number / self.rows) #to find the final page
         self.printf('there are ' + str(self.result_number) + ' results')
 
+    #show the search results on the UI table
     def show_results(self):
+        self.clear()
         ui.lineEdit_page.setText('%s/%s'%(self.page,self.last_page)) #change the pagination
         #self.printf the search result on the ui table
         self.ui.table_search.clearContents
@@ -227,6 +268,7 @@ class ResultList(object):
             for author in paper.author:
                 self.ui.table_search.setItem(row, 2, QTableWidgetItem(author + ','))
 
+    #functions to help to turn a page
     def next_page(self):
         if self.page != self.last_page:
             self.page += 1
@@ -237,8 +279,21 @@ class ResultList(object):
         if self.page != 1:
             self.page -= 1
             self.show_results()
+    #clear the search results on the UI table, but results are still stored in the class
+    def clear(self):
+        for row in range(0,self.rows):
+            self.ui.table_search.setItem(row, 0, QTableWidgetItem(''))
+            self.ui.table_search.setItem(row, 1, QTableWidgetItem(''))
+            self.ui.table_search.setItem(row, 2, QTableWidgetItem(''))
+            self.ui.table_search.setItem(row, 3, QTableWidgetItem(''))
+            self.ui.table_search.setItem(row, 4, QTableWidgetItem(''))
 
     #the following function is to download the pdf file
+    #change the download path
+    def set_download_path(self):
+        self.path = QFileDialog.getExistingDirectory(None, "Please choose the download path", self.path)
+        self.printf('download path has been successufly set as '+ self.path)
+
     def download(self,literature:Literature):
         #try:
         r = requests.get(literature.pdf_url,headers = header)
@@ -249,7 +304,7 @@ class ResultList(object):
             self.printf('request to download' + str(literature.title) +'failed,cannot connect to the internet')
             return -1
         #try:
-        self.printf('downloading from' + literature.pdf_url)
+        self.printf('downloading from ' + literature.pdf_url)
         with open(self.path + str(literature.id) + ',' + literature.title + '.pdf','wb') as f:
             f.write(r.content)
             f.flush() #in case of the file is in the buffer!!
@@ -268,7 +323,8 @@ class ResultList(object):
             ui.table_pushButton[row].setText('downloaded')
         self.printf('downloading task finished')
 
-    def click_to_download(self,row):
+    #this function is to download a particular article when you click on the download button
+    def click_to_download(self, row: int):
         if self.start_id + row >= self.result_number:
             return 0
         ui.table_pushButton[row].setText('downloading')
@@ -277,9 +333,13 @@ class ResultList(object):
             self.printf('pdf has been downloaded')
         else:
             ui.table_pushButton[row].setText('download')
-    
-    
 
+    #this function is coming soon
+    def look_for_reference(self):
+        self.printf('coming soon!')
+    
+    
+#coming soon
 class Reference(object):
     
     literaturelist = []
@@ -293,10 +353,14 @@ if __name__ == "__main__":
     
     resultlist = ResultList(ui)
 
+    #define connection
     ui.pushButton_search.clicked.connect(lambda: resultlist.search_results())
     ui.pushButton_search.clicked.connect(lambda: resultlist.show_results())
     ui.pushButton_next.clicked.connect(lambda: resultlist.next_page())
     ui.pushButton_previous.clicked.connect(lambda: resultlist.previous_page())
+    ui.pushButton_clear.clicked.connect(lambda: resultlist.clear())
+    #set download path:
+    ui.pushButton_set_path.clicked.connect(lambda: resultlist.set_download_path())
     #download search results:
     ui.pushButton_download_all.clicked.connect(lambda: resultlist.download_all())
 
@@ -312,8 +376,8 @@ if __name__ == "__main__":
     ui.table_pushButton[9].clicked.connect(lambda: resultlist.click_to_download(9))
     ui.table_pushButton[10].clicked.connect(lambda: resultlist.click_to_download(10))
     ui.table_pushButton[11].clicked.connect(lambda: resultlist.click_to_download(11))
-    
-
+    #look for reference
+    ui.pushButton_search_references.clicked.connect(lambda: resultlist.look_for_reference())
     MainWindow.show()
     sys.exit(app.exec())
 
